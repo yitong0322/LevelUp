@@ -6,12 +6,13 @@ import {
   setDoc, 
   collection, 
   getDocs, 
+  deleteDoc,
   Firestore 
 } from "firebase/firestore";
 import { Task, User, ShopItem } from '../types';
 import { INITIAL_TASKS, INITIAL_USER, INITIAL_SHOP_ITEMS } from '../constants';
 
-// --- 1. 配置信息 ---
+// --- 1. Firebase 配置 ---
 const firebaseConfig = {
   apiKey: "AIzaSyAJQt_oKpW2XzXAq62cGhGr51UbYVAmR64",
   authDomain: "levelup-43fca.firebaseapp.com",
@@ -29,6 +30,7 @@ export interface DatabaseAdapter {
   setAuth(isAuthenticated: boolean): Promise<void>;
   getTasks(): Promise<Task[]>;
   saveTasks(tasks: Task[]): Promise<void>;
+  deleteTask(taskId: string): Promise<void>; // 新增删除接口
   getUser(): Promise<User>;
   saveUser(user: User): Promise<void>;
   getShopItems(): Promise<ShopItem[]>;
@@ -58,7 +60,7 @@ class FirebaseAdapter implements DatabaseAdapter {
     this.auth = isAuthenticated;
   }
 
-  // 获取所有任务
+  // --- 任务管理 ---
   async getTasks(): Promise<Task[]> {
     try {
       const querySnapshot = await getDocs(collection(this.db, "tasks"));
@@ -74,22 +76,35 @@ class FirebaseAdapter implements DatabaseAdapter {
     }
   }
 
-  // 批量保存任务
   async saveTasks(tasks: Task[]): Promise<void> {
     try {
-      for (const task of tasks) {
-        // 使用 task.id 作为文档名
+      // 遍历保存每一个任务
+      const promises = tasks.map(task => {
         const docRef = doc(this.db, "tasks", task.id);
-        await setDoc(docRef, task, { merge: true });
-      }
+        return setDoc(docRef, task, { merge: true });
+      });
+      await Promise.all(promises);
     } catch (e) {
       console.error("保存任务失败", e);
     }
   }
 
-  // 获取用户属性 (金币、经验、等级)
+  // 🔥 解决删除同步问题的关键方法
+  async deleteTask(taskId: string): Promise<void> {
+    try {
+      const docRef = doc(this.db, "tasks", taskId);
+      await deleteDoc(docRef);
+      console.log(`🗑️ 任务 ${taskId} 已从云端删除`);
+    } catch (e) {
+      console.error("删除任务失败:", e);
+      throw e;
+    }
+  }
+
+  // --- 用户数据 ---
   async getUser(): Promise<User> {
     try {
+      // 使用固定 ID 存储玩家数据
       const docRef = doc(this.db, "users", "default_player");
       const docSnap = await getDoc(docRef);
       if (docSnap.exists()) {
@@ -101,7 +116,6 @@ class FirebaseAdapter implements DatabaseAdapter {
     }
   }
 
-  // 保存用户属性
   async saveUser(user: User): Promise<void> {
     try {
       const docRef = doc(this.db, "users", "default_player");
@@ -111,15 +125,14 @@ class FirebaseAdapter implements DatabaseAdapter {
     }
   }
 
-  // 获取商店物品 (对应你截图中的 config -> shop 路径)
+  // --- 商店管理 (匹配你截图中的 config/shop 结构) ---
   async getShopItems(): Promise<ShopItem[]> {
     try {
       const docRef = doc(this.db, "config", "shop");
       const docSnap = await getDoc(docRef);
       
       if (docSnap.exists()) {
-        const data = docSnap.data();
-        return data.items as ShopItem[];
+        return docSnap.data().items || INITIAL_SHOP_ITEMS;
       }
       return INITIAL_SHOP_ITEMS;
     } catch (e) {
@@ -128,10 +141,10 @@ class FirebaseAdapter implements DatabaseAdapter {
     }
   }
 
-  // 保存商店配置
   async saveShopItems(items: ShopItem[]): Promise<void> {
     try {
       const docRef = doc(this.db, "config", "shop");
+      // 注意：这里必须以对象形式保存，因为 items 是文档里的一个字段
       await setDoc(docRef, { items }, { merge: true });
     } catch (e) {
       console.error("更新商店失败", e);
@@ -139,5 +152,4 @@ class FirebaseAdapter implements DatabaseAdapter {
   }
 }
 
-// --- 4. 导出单例 ---
 export const db = new FirebaseAdapter();

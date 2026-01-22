@@ -162,11 +162,21 @@ const App: React.FC = () => {
     setSelectedTask(finalTask);
   };
 
-  const handleDeleteTask = (taskId: string) => {
+  const handleDeleteTask = async (taskId: string) => {
+    // 1. 立即更新本地 UI (保持响应速度)
     setTasks(prev => prev.filter(t => t.id !== taskId));
     setSelectedTask(null);
-  };
 
+    // 2. 如果不是临时 ID（以 new_ 开头的还没存入 DB），则从数据库删除
+    if (!taskId.startsWith('new_')) {
+      try {
+        await db.deleteTask(taskId);
+      } catch (error) {
+        // 如果删除失败，建议重新获取数据或提示用户
+        console.error("同步删除失败");
+      }
+    }
+  };
   const handlePunishTask = (task: Task) => {
       const pointLog: PointLog = {
           id: `pl_${Date.now()}`,
