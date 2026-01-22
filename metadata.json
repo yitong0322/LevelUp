@@ -1,0 +1,5 @@
+{
+  "name": "LevelUp",
+  "description": "A gamified task management dashboard with Admin/Client workflows, leveling system, and point tracking.",
+  "requestFramePermissions": []
+}
