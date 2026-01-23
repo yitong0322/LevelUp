@@ -7,7 +7,10 @@ import {
   collection, 
   getDocs, 
   deleteDoc,
-  Firestore 
+  onSnapshot, // 🔥 新增：用于实时监听
+  query,      // 🔥 新增：用于构建查询
+  Firestore,
+  Unsubscribe // 🔥 新增：监听器的类型
 } from "firebase/firestore";
 import { Task, User, ShopItem } from '../types';
 import { INITIAL_TASKS, INITIAL_USER, INITIAL_SHOP_ITEMS } from '../constants';
@@ -28,11 +31,20 @@ export interface DatabaseAdapter {
   init(): Promise<void>;
   getAuth(): Promise<boolean>;
   setAuth(isAuthenticated: boolean): Promise<void>;
-  getTasks(): Promise<Task[]>;
-  saveTasks(tasks: Task[]): Promise<void>;
-  deleteTask(taskId: string): Promise<void>; // 新增删除接口
+  
+  // 任务相关
+  getTasks(): Promise<Task[]>; // (旧) 一次性获取
+  subscribeTasks(callback: (tasks: Task[]) => void): Unsubscribe; // (新) 实时监听
+  saveTasks(tasks: Task[]): Promise<void>; // (旧) 批量保存
+  saveTask(task: Task): Promise<void>; // (新) 单个保存，更安全
+  deleteTask(taskId: string): Promise<void>; 
+
+  // 用户相关
   getUser(): Promise<User>;
+  subscribeUser(callback: (user: User) => void): Unsubscribe; // (新) 实时监听用户
   saveUser(user: User): Promise<void>;
+
+  // 商店相关
   getShopItems(): Promise<ShopItem[]>;
   saveShopItems(items: ShopItem[]): Promise<void>;
 }
@@ -60,7 +72,33 @@ class FirebaseAdapter implements DatabaseAdapter {
     this.auth = isAuthenticated;
   }
 
-  // --- 任务管理 ---
+  // --- 任务管理 (Real-time Upgrade) ---
+
+  // 🔥 核心方法：实时监听任务变化
+  // 当 iPad 修改数据时，这个 callback 会自动在电脑端被触发
+  subscribeTasks(callback: (tasks: Task[]) => void): Unsubscribe {
+    // 监听 'tasks' 集合
+    const q = query(collection(this.db, "tasks"));
+    
+    // onSnapshot 会建立长连接
+    const unsubscribe = onSnapshot(q, (querySnapshot) => {
+      const tasks = querySnapshot.docs.map(doc => ({
+        ...doc.data(),
+        id: doc.id
+      })) as Task[];
+      
+      // 如果数据库是空的，不返回空数组，避免冲掉初始数据
+      if (tasks.length > 0) {
+        callback(tasks);
+      }
+    }, (error) => {
+      console.error("❌ 任务监听断开:", error);
+    });
+
+    return unsubscribe; // 返回这个函数用于取消监听
+  }
+
+  // (旧方法保持兼容)
   async getTasks(): Promise<Task[]> {
     try {
       const querySnapshot = await getDocs(collection(this.db, "tasks"));
@@ -76,20 +114,30 @@ class FirebaseAdapter implements DatabaseAdapter {
     }
   }
 
+  // 🔥 核心方法：只保存单个任务
+  // 避免覆盖整个列表
+  async saveTask(task: Task): Promise<void> {
+    try {
+      const docRef = doc(this.db, "tasks", task.id);
+      await setDoc(docRef, task, { merge: true });
+    } catch (e) {
+      console.error(`❌ 保存单个任务 ${task.id} 失败`, e);
+    }
+  }
+
+  // (旧方法保持兼容，但建议在 App.tsx 中减少调用)
   async saveTasks(tasks: Task[]): Promise<void> {
     try {
-      // 遍历保存每一个任务
       const promises = tasks.map(task => {
         const docRef = doc(this.db, "tasks", task.id);
         return setDoc(docRef, task, { merge: true });
       });
       await Promise.all(promises);
     } catch (e) {
-      console.error("保存任务失败", e);
+      console.error("保存所有任务失败", e);
     }
   }
 
-  // 🔥 解决删除同步问题的关键方法
   async deleteTask(taskId: string): Promise<void> {
     try {
       const docRef = doc(this.db, "tasks", taskId);
@@ -101,10 +149,20 @@ class FirebaseAdapter implements DatabaseAdapter {
     }
   }
 
-  // --- 用户数据 ---
+  // --- 用户数据 (User) ---
+
+  // (可选) 实时监听用户数据，比如金币变化
+  subscribeUser(callback: (user: User) => void): Unsubscribe {
+    const docRef = doc(this.db, "users", "default_player");
+    return onSnapshot(docRef, (docSnap) => {
+      if (docSnap.exists()) {
+        callback(docSnap.data() as User);
+      }
+    });
+  }
+
   async getUser(): Promise<User> {
     try {
-      // 使用固定 ID 存储玩家数据
       const docRef = doc(this.db, "users", "default_player");
       const docSnap = await getDoc(docRef);
       if (docSnap.exists()) {
@@ -125,7 +183,8 @@ class FirebaseAdapter implements DatabaseAdapter {
     }
   }
 
-  // --- 商店管理 (匹配你截图中的 config/shop 结构) ---
+  // --- 商店管理 (Shop) ---
+  
   async getShopItems(): Promise<ShopItem[]> {
     try {
       const docRef = doc(this.db, "config", "shop");
@@ -144,7 +203,6 @@ class FirebaseAdapter implements DatabaseAdapter {
   async saveShopItems(items: ShopItem[]): Promise<void> {
     try {
       const docRef = doc(this.db, "config", "shop");
-      // 注意：这里必须以对象形式保存，因为 items 是文档里的一个字段
       await setDoc(docRef, { items }, { merge: true });
     } catch (e) {
       console.error("更新商店失败", e);

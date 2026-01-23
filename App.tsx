@@ -33,34 +33,46 @@ const App: React.FC = () => {
   const [currentDay, setCurrentDay] = useState<DayOfWeek>(getDayName(new Date()));
   const taskDetailRef = useRef<TaskDetailHandle>(null);
 
-  // --- 1. 初始加载数据 ---
+  // --- 1. 初始加载与实时监听 ---
   useEffect(() => {
-    const loadData = async () => {
+    const initApp = async () => {
       await db.init();
-      const [auth, loadedTasks, loadedUser, loadedShop] = await Promise.all([
+      
+      // 1. 获取不需要实时监听的基础数据 (User, Shop)
+      // 注意：这里不再获取 tasks，因为下面会通过 subscribeTasks 获取
+      const [auth, loadedUser, loadedShop] = await Promise.all([
         db.getAuth(),
-        db.getTasks(),
         db.getUser(),
         db.getShopItems()
       ]);
 
       setIsAuthenticated(auth);
-      setTasks(loadedTasks);
       setUser(loadedUser);
       setShopItems(loadedShop);
+
+      // 2. 🔥 开启任务实时监听 (Real-time Listener)
+      // 只要数据库有变化（无论是iPad改的还是午夜清理改的），这里都会立刻收到
+      const unsubscribeTasks = db.subscribeTasks((updatedTasks) => {
+        setTasks(updatedTasks);
+      });
+
       setIsLoaded(true);
+
+      // 组件卸载时关闭监听
+      return () => {
+        unsubscribeTasks();
+      };
     };
-    loadData();
+
+    initApp();
   }, []);
 
-  // --- 2. 数据持久化 (同步到 Firebase) ---
+  // --- 2. 数据持久化 (User & Shop) ---
+  // 注意：删除了 saveTasks 的自动保存 Effect，防止全量覆盖
+  
   useEffect(() => {
     if (isLoaded) db.setAuth(isAuthenticated);
   }, [isAuthenticated, isLoaded]);
-
-  useEffect(() => {
-    if (isLoaded) db.saveTasks(tasks);
-  }, [tasks, isLoaded]);
 
   useEffect(() => {
     if (isLoaded) db.saveUser(user);
@@ -79,7 +91,7 @@ const App: React.FC = () => {
       const todayStr = now.toISOString().split('T')[0]; // 获取 YYYY-MM-DD
       const todayName = getDayName(now);
       
-      // 检查今天是否已经清理过 (补救逻辑的核心)
+      // 检查今天是否已经清理过
       if (user.lastCleanupDate === todayStr) {
         console.log("今日已清理过任务，跳过...");
         return;
@@ -88,6 +100,7 @@ const App: React.FC = () => {
       console.log("正在执行跨日/午夜清理逻辑...");
       const tasksToDelete: string[] = [];
       
+      // 计算更新后的任务状态
       const updatedTasks = tasks.reduce((acc: Task[], t) => {
         const isRecurring = t.frequency && t.frequency.length > 0;
         
@@ -124,11 +137,15 @@ const App: React.FC = () => {
           await db.deleteTask(id);
         }
         
-        // 2. 更新本地状态
+        // 2. 🔥 显式保存更新后的任务状态 (因为移除了自动保存 Effect)
+        // 这里使用批量保存是安全的，因为这是基于最新状态计算出来的
+        await db.saveTasks(updatedTasks);
+        
+        // 3. 更新本地状态 (其实 subscribeTasks 也会推回来，但为了 UI 立即响应可以先 set)
         setTasks(updatedTasks);
         setCurrentDay(todayName);
         
-        // 3. 更新用户信息，记录今天的清理已完成，并重置今日得分
+        // 4. 更新用户信息
         setUser(prev => ({ 
           ...prev, 
           lastCleanupDate: todayStr, 
@@ -156,7 +173,7 @@ const App: React.FC = () => {
     }, getMsToMidnight());
 
     return () => clearTimeout(timerId);
-  }, [isLoaded, user.lastCleanupDate, tasks]); 
+  }, [isLoaded, user.lastCleanupDate, tasks]); // 依赖 tasks 确保清理时基于最新数据
 
 
   // --- 业务处理器 ---
@@ -176,6 +193,7 @@ const App: React.FC = () => {
         finalTask = { ...finalTask, id: finalTask.id.replace('new_', 'task_') };
     }
 
+    // 1. 本地乐观更新 (让 UI 反应快)
     setTasks(prev => {
         const exists = prev.find(t => t.id === updatedTask.id);
         if (exists) {
@@ -185,6 +203,10 @@ const App: React.FC = () => {
         }
     });
     
+    // 2. 🔥 立即同步单条数据到云端 (更安全，不会覆盖其他任务)
+    db.saveTask(finalTask);
+    
+    // 处理积分逻辑
     const oldTask = tasks.find(t => t.id === updatedTask.id);
     if (oldTask && oldTask.status !== TaskStatus.COMPLETED && finalTask.status === TaskStatus.COMPLETED) {
       const pointLog: PointLog = {
@@ -204,8 +226,11 @@ const App: React.FC = () => {
   };
 
   const handleDeleteTask = async (taskId: string) => {
+    // 本地更新
     setTasks(prev => prev.filter(t => t.id !== taskId));
     setSelectedTask(null);
+    
+    // 云端同步
     if (!taskId.startsWith('new_')) {
       try {
         await db.deleteTask(taskId);
