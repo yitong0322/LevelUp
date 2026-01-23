@@ -1,4 +1,3 @@
-
 export enum TaskStatus {
   TODO = 'TODO',
   REVIEW = 'REVIEW',
@@ -64,6 +63,9 @@ export interface User {
   inventory: string[]; // IDs of purchased items
   history: Transaction[]; // Log of shop interactions
   pointLogs: PointLog[]; // Log of all point changes for stats
+  // 🔥 新增字段：记录上次午夜清理的日期，用于启动补救逻辑
+  // 格式建议为 "YYYY-MM-DD"
+  lastCleanupDate?: string; 
 }
 
 export interface ShopItem {

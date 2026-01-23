@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { db } from './services/db'; // Import the DB service
+import { db } from './services/db'; 
 import { INITIAL_TASKS, INITIAL_USER, INITIAL_SHOP_ITEMS, COLUMN_CONFIG } from './constants';
 import { Task, UserRole, User, TaskStatus, ShopItem, Transaction, PointLog, DayOfWeek } from './types';
 import { TaskCard } from './components/TaskCard';
@@ -11,23 +11,20 @@ import { InventoryModal } from './components/InventoryModal';
 import { StatsModal } from './components/StatsModal';
 import { LayoutDashboard, LogOut, Zap, Trophy, Sparkles, Store, Plus, Package, BarChart2, Loader2 } from 'lucide-react';
 
-// Helper to get current day name matching DayOfWeek type
+// 辅助函数：获取当前星期名称
 const getDayName = (date: Date): DayOfWeek => {
   const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
   return days[date.getDay()] as DayOfWeek;
 };
 
 const App: React.FC = () => {
-  // Loading State
+  // --- 状态管理 ---
   const [isLoaded, setIsLoaded] = useState(false);
-
-  // App State
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [tasks, setTasks] = useState<Task[]>(INITIAL_TASKS);
   const [shopItems, setShopItems] = useState<ShopItem[]>(INITIAL_SHOP_ITEMS);
   const [user, setUser] = useState<User>(INITIAL_USER);
 
-  // UI State
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
   const [isShopOpen, setIsShopOpen] = useState(false);
   const [isInventoryOpen, setIsInventoryOpen] = useState(false);
@@ -36,7 +33,7 @@ const App: React.FC = () => {
   const [currentDay, setCurrentDay] = useState<DayOfWeek>(getDayName(new Date()));
   const taskDetailRef = useRef<TaskDetailHandle>(null);
 
-  // --- 1. INITIAL LOAD ---
+  // --- 1. 初始加载数据 ---
   useEffect(() => {
     const loadData = async () => {
       await db.init();
@@ -56,8 +53,7 @@ const App: React.FC = () => {
     loadData();
   }, []);
 
-  // --- 2. PERSISTENCE EFFECTS ---
-  // Only save if initial load is complete to avoid overwriting DB with empty states
+  // --- 2. 数据持久化 (同步到 Firebase) ---
   useEffect(() => {
     if (isLoaded) db.setAuth(isAuthenticated);
   }, [isAuthenticated, isLoaded]);
@@ -74,47 +70,96 @@ const App: React.FC = () => {
     if (isLoaded) db.saveShopItems(shopItems);
   }, [shopItems, isLoaded]);
 
-  // --- 3. MIDNIGHT CLEANUP ---
+  // --- 3. 强化后的午夜清理与启动检查逻辑 ---
   useEffect(() => {
     if (!isLoaded) return;
 
+    const performCleanup = async () => {
+      const now = new Date();
+      const todayStr = now.toISOString().split('T')[0]; // 获取 YYYY-MM-DD
+      const todayName = getDayName(now);
+      
+      // 检查今天是否已经清理过 (补救逻辑的核心)
+      if (user.lastCleanupDate === todayStr) {
+        console.log("今日已清理过任务，跳过...");
+        return;
+      }
+
+      console.log("正在执行跨日/午夜清理逻辑...");
+      const tasksToDelete: string[] = [];
+      
+      const updatedTasks = tasks.reduce((acc: Task[], t) => {
+        const isRecurring = t.frequency && t.frequency.length > 0;
+        
+        // 逻辑 A: 已完成的一次性任务 -> 标记彻底删除
+        if (!isRecurring && t.status === TaskStatus.COMPLETED) {
+          tasksToDelete.push(t.id);
+          return acc; 
+        }
+
+        // 逻辑 B: 处理重置
+        let newStatus = t.status;
+        let shouldClearMessages = false;
+
+        // 如果是循环任务，或者该任务属于今天
+        if (!isRecurring || (t.frequency && t.frequency.includes(todayName))) {
+          // 非 Penalty 状态的，全部回滚到 TODO
+          if (t.status !== TaskStatus.PENALTY) { 
+             newStatus = TaskStatus.TODO;
+             shouldClearMessages = true;
+          }
+        }
+
+        acc.push({ 
+          ...t, 
+          status: newStatus, 
+          messages: shouldClearMessages ? [] : t.messages 
+        });
+        return acc;
+      }, []);
+
+      try {
+        // 1. 执行云端物理删除
+        for (const id of tasksToDelete) {
+          await db.deleteTask(id);
+        }
+        
+        // 2. 更新本地状态
+        setTasks(updatedTasks);
+        setCurrentDay(todayName);
+        
+        // 3. 更新用户信息，记录今天的清理已完成，并重置今日得分
+        setUser(prev => ({ 
+          ...prev, 
+          lastCleanupDate: todayStr, 
+          todayScore: 0 
+        }));
+        
+        console.log(`🌙 清理/补救完成 [${todayStr}]`);
+      } catch (e) {
+        console.error("清理同步失败:", e);
+      }
+    };
+
+    // A. 启动时立即检查一次日期
+    performCleanup();
+
+    // B. 设置定时器监控下一个午夜 00:00:01
     const getMsToMidnight = () => {
       const now = new Date();
-      const night = new Date(
-        now.getFullYear(),
-        now.getMonth(),
-        now.getDate() + 1,
-        0, 0, 0
-      );
+      const night = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 0, 0, 1);
       return night.getTime() - now.getTime();
     };
 
-    const timeoutId = setTimeout(() => {
-      const nextDayDate = new Date();
-      setCurrentDay(getDayName(nextDayDate));
-
-      setTasks(prevTasks => {
-        return prevTasks.reduce((acc, t) => {
-            const isRecurring = t.frequency && t.frequency.length > 0;
-            if (!isRecurring && t.status === TaskStatus.COMPLETED) {
-                return acc;
-            }
-            if (isRecurring) {
-                acc.push({ ...t, status: TaskStatus.TODO, messages: [] });
-            } else {
-                acc.push(t);
-            }
-            return acc;
-        }, [] as Task[]);
-      });
-      setSelectedTask(null);
+    const timerId = setTimeout(() => {
+      performCleanup();
     }, getMsToMidnight());
 
-    return () => clearTimeout(timeoutId);
-  }, [isLoaded]);
+    return () => clearTimeout(timerId);
+  }, [isLoaded, user.lastCleanupDate, tasks]); 
 
 
-  // --- HANDLERS ---
+  // --- 业务处理器 ---
 
   const handleLogin = (role: UserRole) => {
     setUser(prev => ({ ...prev, role }));
@@ -127,7 +172,6 @@ const App: React.FC = () => {
 
   const handleTaskUpdate = (updatedTask: Task) => {
     let finalTask = updatedTask;
-
     if (finalTask.id.startsWith('new_')) {
         finalTask = { ...finalTask, id: finalTask.id.replace('new_', 'task_') };
     }
@@ -142,8 +186,6 @@ const App: React.FC = () => {
     });
     
     const oldTask = tasks.find(t => t.id === updatedTask.id);
-    
-    // Check completion points
     if (oldTask && oldTask.status !== TaskStatus.COMPLETED && finalTask.status === TaskStatus.COMPLETED) {
       const pointLog: PointLog = {
           id: `pl_${Date.now()}`,
@@ -158,36 +200,32 @@ const App: React.FC = () => {
         pointLogs: [...prev.pointLogs, pointLog]
       }));
     }
-    
     setSelectedTask(finalTask);
   };
 
   const handleDeleteTask = async (taskId: string) => {
-    // 1. 立即更新本地 UI (保持响应速度)
     setTasks(prev => prev.filter(t => t.id !== taskId));
     setSelectedTask(null);
-
-    // 2. 如果不是临时 ID（以 new_ 开头的还没存入 DB），则从数据库删除
     if (!taskId.startsWith('new_')) {
       try {
         await db.deleteTask(taskId);
       } catch (error) {
-        // 如果删除失败，建议重新获取数据或提示用户
-        console.error("同步删除失败");
+        console.error("删除云端数据失败");
       }
     }
   };
+
   const handlePunishTask = (task: Task) => {
       const pointLog: PointLog = {
           id: `pl_${Date.now()}`,
           reason: `Penalty: ${task.title}`,
-          change: task.points,
+          change: -task.points,
           timestamp: Date.now()
       };
       setUser(prev => ({
         ...prev,
-        score: prev.score + task.points,
-        todayScore: prev.todayScore + task.points,
+        score: prev.score - task.points,
+        todayScore: prev.todayScore - task.points,
         pointLogs: [...prev.pointLogs, pointLog]
       }));
       setSelectedTask(null);
@@ -257,7 +295,8 @@ const App: React.FC = () => {
           points: 50,
           status: TaskStatus.TODO,
           category: '',
-          messages: []
+          messages: [],
+          frequency: [] 
       };
       setSelectedTask(newTask);
   };
@@ -266,7 +305,7 @@ const App: React.FC = () => {
       setSelectedTask(null);
   };
 
-  // --- RENDER ---
+  // --- 渲染界面 ---
 
   if (!isLoaded) {
     return (
@@ -282,15 +321,12 @@ const App: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-white font-sans text-slate-900 flex flex-col">
-      {/* Navbar */}
       <header className="bg-white border-b-2 border-slate-100 sticky top-0 z-10">
         <div className="px-6 py-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
-          
-          {/* Brand & Logout */}
           <div className="flex items-center justify-between w-full md:w-auto">
             <div className="flex items-center gap-3">
               <div className="bg-indigo-50 p-2 rounded-lg rotate-3">
-                <LayoutDashboard className="text-white" size={20} />
+                <LayoutDashboard className="text-indigo-600" size={20} />
               </div>
               <div>
                 <h1 className="text-2xl font-black text-slate-900 tracking-tight flex items-center gap-1">
@@ -299,8 +335,6 @@ const App: React.FC = () => {
                 <span className="inline-block px-2 py-0.5 bg-slate-100 rounded text-[10px] text-slate-500 font-bold tracking-wider uppercase">{user.role}</span>
               </div>
             </div>
-            
-            {/* Mobile Actions */}
             <div className="flex items-center gap-2 md:hidden">
                  <button onClick={handleLogout} className="text-slate-400">
                     <LogOut size={20} />
@@ -308,10 +342,7 @@ const App: React.FC = () => {
             </div>
           </div>
 
-          {/* Gamification Stats */}
           <div className="flex-1 flex flex-col md:flex-row items-center justify-end gap-4 md:gap-8 w-full md:w-auto">
-            
-            {/* My Items & Stats */}
             <div className="flex gap-2">
                 <button 
                     className="flex items-center gap-2 bg-white px-4 py-2 rounded-xl border-2 border-slate-100 hover:border-indigo-400 transition-colors group"
@@ -340,7 +371,6 @@ const App: React.FC = () => {
                 </button>
             </div>
 
-            {/* Score Stats */}
             <div className="flex gap-4">
               <div className="flex flex-col items-end">
                 <span className="text-[10px] font-black text-slate-400 uppercase tracking-wide">Today</span>
@@ -349,9 +379,7 @@ const App: React.FC = () => {
                   <span>+{user.todayScore}</span>
                 </div>
               </div>
-              
               <div className="w-0.5 h-8 bg-slate-100"></div>
-
               <div 
                 className="flex flex-col items-end cursor-pointer group"
                 onClick={() => setIsShopOpen(true)}
@@ -365,9 +393,7 @@ const App: React.FC = () => {
                   <span>{user.score}</span>
                 </div>
               </div>
-
               <div className="hidden md:block w-0.5 h-8 bg-slate-100"></div>
-              
               <button 
                 onClick={handleLogout}
                 className="hidden md:flex items-center justify-center w-10 h-10 rounded-lg bg-slate-50 text-slate-400 hover:bg-rose-50 hover:text-rose-500 transition-all"
@@ -376,12 +402,10 @@ const App: React.FC = () => {
                 <LogOut size={18} />
               </button>
             </div>
-
           </div>
         </div>
       </header>
 
-      {/* Kanban Board */}
       <main className="flex-1 overflow-x-auto px-6 py-6">
         <div className="flex gap-6 min-w-[1200px] h-full">
           {COLUMN_CONFIG.map(col => {
@@ -432,7 +456,6 @@ const App: React.FC = () => {
         </div>
       </main>
 
-      {/* Modals */}
       <Modal 
         isOpen={!!selectedTask} 
         onClose={handleCloseTaskModal}
@@ -476,7 +499,6 @@ const App: React.FC = () => {
         logs={user.pointLogs}
       />
 
-      {/* Admin FAB */}
       {user.role === UserRole.ADMIN && (
         <button
           onClick={handleAddTask}

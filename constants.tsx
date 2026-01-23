@@ -11,16 +11,12 @@ export const INITIAL_USER: User = {
   todayScore: 0,
   inventory: [],
   history: [],
-  pointLogs: []
+  pointLogs: [],
+  lastCleanupDate: ''
 };
 
 export const INITIAL_SHOP_ITEMS: ShopItem[] = [
-  { id: '1', name: '游戏时间 1小时', cost: 150, emoji: '🎮', description: 'Exchange for 1 hour of uninterrupted gaming.' },
-  { id: '2', name: '免做家务卡', cost: 500, emoji: '🧹', description: 'Skip one assigned chore for the day.' },
-  { id: '3', name: '看电影券', cost: 400, emoji: '🎬', description: 'Pick the movie for movie night.' },
-  { id: '4', name: '奶茶一杯', cost: 200, emoji: '🧋', description: 'Get a bubble tea of your choice.' },
-  { id: '5', name: '现金奖励 $10', cost: 1000, emoji: '💵', description: 'Real money reward.' },
-  { id: '6', name: '神秘大奖', cost: 2000, emoji: '🎁', description: 'A surprise gift from the Admin.' },
+
 ];
 
 export const INITIAL_TASKS: Task[] = [];

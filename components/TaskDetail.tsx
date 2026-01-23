@@ -22,10 +22,8 @@ const DAYS: DayOfWeek[] = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 export const TaskDetail = forwardRef<TaskDetailHandle, TaskDetailProps>(({ task, userRole, onUpdateTask, onClose, onPunish, onDelete }, ref) => {
   const isNewTask = task.id.startsWith('new_');
   
-  // Edit mode state: New tasks are always editing, existing tasks start as view-only
+  // Edit mode state
   const [isEditing, setIsEditing] = useState(isNewTask);
-  
-  // Delete confirmation state
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   const [inputText, setInputText] = useState('');
@@ -42,11 +40,9 @@ export const TaskDetail = forwardRef<TaskDetailHandle, TaskDetailProps>(({ task,
   const chatEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Determine if the task can be modified (Edit/Delete)
-  // Allowed only for New Tasks, TODO, or PENALTY.
-  const canModify = isNewTask || task.status === TaskStatus.TODO || task.status === TaskStatus.PENALTY;
+  // --- 修改 1: 移除权限守卫逻辑，管理员在任何状态下都可以修改和删除 ---
+  const canModify = userRole === UserRole.ADMIN || isNewTask;
 
-  // Sync state if task prop changes (e.g. navigation)
   useEffect(() => {
     setTitle(task.title);
     setDescription(task.description);
@@ -54,9 +50,8 @@ export const TaskDetail = forwardRef<TaskDetailHandle, TaskDetailProps>(({ task,
     setFrequency(task.frequency || []);
     setCategory(task.category);
     setStatus(task.status);
-    // Reset edit mode when switching tasks (unless it's a new task)
     setIsEditing(task.id.startsWith('new_'));
-    setShowDeleteConfirm(false); // Reset delete confirmation on task switch
+    setShowDeleteConfirm(false);
   }, [task]);
 
   const checkDirty = () => {
@@ -80,7 +75,6 @@ export const TaskDetail = forwardRef<TaskDetailHandle, TaskDetailProps>(({ task,
         frequency,
         status
     });
-    // For new tasks, close after save
     if (isNewTask) {
         onClose();
     }
@@ -117,7 +111,6 @@ export const TaskDetail = forwardRef<TaskDetailHandle, TaskDetailProps>(({ task,
 
     let newStatus = task.status;
     
-    // Workflow Logic
     if (userRole === UserRole.CLIENT) {
       if (task.status === TaskStatus.TODO || task.status === TaskStatus.TRY_AGAIN) {
         newStatus = TaskStatus.REVIEW;
@@ -142,7 +135,6 @@ export const TaskDetail = forwardRef<TaskDetailHandle, TaskDetailProps>(({ task,
   };
 
   const handlePunishClick = () => {
-      // If there is text, send it as a message first
       if (inputText || selectedImage) {
           const newMessage: Message = {
             id: Date.now().toString(),
@@ -167,7 +159,6 @@ export const TaskDetail = forwardRef<TaskDetailHandle, TaskDetailProps>(({ task,
           onDelete(task.id);
       } else {
           setShowDeleteConfirm(true);
-          // Auto-reset confirmation after 3 seconds
           setTimeout(() => setShowDeleteConfirm(false), 3000);
       }
   };
@@ -203,14 +194,12 @@ export const TaskDetail = forwardRef<TaskDetailHandle, TaskDetailProps>(({ task,
     return <span className={`px-2 py-1 rounded text-xs font-bold uppercase ${colors[status]}`}>{status.replace('_', ' ')}</span>;
   };
 
-  // Only allow editing status to TODO or PENALTY
-  const availableStatuses = [TaskStatus.TODO, TaskStatus.PENALTY];
+  // --- 修改 2: 开放所有状态供管理员编辑时选择 ---
+  const allStatuses = Object.values(TaskStatus);
 
   return (
     <div className="flex flex-col h-[650px]">
-      {/* Header Info */}
       <div className={`p-6 bg-white relative ${!isNewTask ? 'border-b-2 border-slate-100' : 'flex-1 overflow-y-auto'}`}>
-        {/* Only show Inputs if Admin AND isEditing is true */}
         {(userRole === UserRole.ADMIN && isEditing) ? (
             <div className="space-y-6">
                 <div>
@@ -244,7 +233,7 @@ export const TaskDetail = forwardRef<TaskDetailHandle, TaskDetailProps>(({ task,
                             onChange={(e) => setStatus(e.target.value as TaskStatus)}
                             className="font-bold p-2 border-2 border-slate-200 rounded-lg focus:border-indigo-500 focus:outline-none text-sm bg-white disabled:bg-slate-50 disabled:text-slate-500 disabled:border-slate-100"
                         >
-                            {availableStatuses.map(s => (
+                            {allStatuses.map(s => (
                                 <option key={s} value={s}>{s.replace('_', ' ')}</option>
                             ))}
                         </select>
@@ -272,7 +261,6 @@ export const TaskDetail = forwardRef<TaskDetailHandle, TaskDetailProps>(({ task,
                     />
                 </div>
                 
-                {/* Frequency Selector */}
                 <div>
                      <label className="flex items-center gap-1 text-[10px] font-black text-slate-400 uppercase tracking-wider mb-2">
                         <Calendar size={12} /> Frequency
@@ -281,6 +269,7 @@ export const TaskDetail = forwardRef<TaskDetailHandle, TaskDetailProps>(({ task,
                         {DAYS.map(day => (
                             <button
                                 key={day}
+                                type="button"
                                 onClick={() => toggleDay(day)}
                                 disabled={!isEditing}
                                 className={`w-10 h-10 rounded-xl text-xs font-bold transition-all border-2 disabled:cursor-not-allowed disabled:opacity-70 ${
@@ -297,7 +286,6 @@ export const TaskDetail = forwardRef<TaskDetailHandle, TaskDetailProps>(({ task,
             </div>
         ) : (
             <>
-                {/* Read-only View (Client or Admin Non-Edit) */}
                 <div className="flex justify-between items-start mb-2 pr-8">
                     <div className="flex items-center gap-2">
                         {renderStatusBadge(task.status)}
@@ -323,7 +311,6 @@ export const TaskDetail = forwardRef<TaskDetailHandle, TaskDetailProps>(({ task,
         )}
       </div>
 
-      {/* Chat Area - Only visible for existing tasks */}
       {!isNewTask && (
           <div className="flex-1 overflow-y-auto p-6 space-y-4 bg-white">
             {task.messages.length === 0 && (
@@ -358,10 +345,7 @@ export const TaskDetail = forwardRef<TaskDetailHandle, TaskDetailProps>(({ task,
           </div>
       )}
 
-      {/* Action Area */}
       <div className="p-4 bg-white border-t-2 border-slate-100">
-        
-        {/* New Task: Simple Save Button */}
         {isNewTask ? (
              <Button 
                 onClick={handleSaveEdit} 
@@ -371,7 +355,6 @@ export const TaskDetail = forwardRef<TaskDetailHandle, TaskDetailProps>(({ task,
             </Button>
         ) : (
             <>
-                {/* Existing Task: Chat Inputs */}
                 <div className="mb-4">
                   {selectedImage && (
                     <div className="relative inline-block mb-2">
@@ -410,14 +393,11 @@ export const TaskDetail = forwardRef<TaskDetailHandle, TaskDetailProps>(({ task,
                   </div>
                 </div>
 
-                {/* Bottom Buttons: Edit/Delete (Left) + Actions (Right) */}
                 <div className="flex justify-between items-center">
-                  
-                  {/* Left: Admin Edit Toggle + Delete - ONLY IF EDITABLE */}
                   <div>
-                    {userRole === UserRole.ADMIN && canModify && (
+                    {/* --- 修改 3: 管理员始终显示删除和编辑按钮 --- */}
+                    {userRole === UserRole.ADMIN && (
                       <div className="flex gap-2">
-                        {/* Always show Delete button for Admin with 2-step confirmation */}
                         <Button 
                             type="button"
                             variant="danger" 
@@ -428,7 +408,7 @@ export const TaskDetail = forwardRef<TaskDetailHandle, TaskDetailProps>(({ task,
                             {showDeleteConfirm ? (
                                 <span className="text-xs font-bold whitespace-nowrap">Confirm?</span>
                             ) : (
-                                <Trash2 size={16} className="pointer-events-none" />
+                                <Trash2 size={16} />
                             )}
                           </Button>
                         
@@ -445,7 +425,6 @@ export const TaskDetail = forwardRef<TaskDetailHandle, TaskDetailProps>(({ task,
                     )}
                   </div>
 
-                  {/* Right: Actions */}
                   <div className="flex justify-end gap-2">
                     {userRole === UserRole.CLIENT && (
                       <Button 
