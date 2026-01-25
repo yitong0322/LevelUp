@@ -241,20 +241,33 @@ const App: React.FC = () => {
   };
 
   const handlePunishTask = (task: Task) => {
-      const penaltyValue = Math.abs(task.points);
+      // 1. 【核心修复】强制取绝对值
+      // 无论任务设定是 50 还是 -50，这里都会变成正数 50
+      const penaltyAmount = Math.abs(task.points); 
 
       const pointLog: PointLog = {
           id: `pl_${Date.now()}`,
           reason: `Penalty: ${task.title}`,
-          change: -penaltyValue, 
+          change: -penaltyAmount, // 2. 确保日志里记的是负数 (例如 -50)
           timestamp: Date.now()
       };
-      setUser(prev => ({
-        ...prev,
-        score: prev.score - penaltyValue,    
-        todayScore: prev.todayScore - penaltyValue,
-        pointLogs: [...prev.pointLogs, pointLog]
-      }));
+
+      setUser(prev => {
+        const newUser = {
+          ...prev,
+          score: prev.score - penaltyAmount,       // 3. 总分执行减法
+          todayScore: prev.todayScore - penaltyAmount, // 4. 今日分执行减法
+          pointLogs: [...prev.pointLogs, pointLog]
+        };
+        
+        // 5. 【关键】由于 React 的更新是异步的，
+        // 这里的 db.saveUser 会在 useEffect 中自动触发，
+        // 但为了保险，你也可以在这里显式保存（可选，不写也行，依靠 useEffect 即可）
+        // db.saveUser(newUser); 
+        
+        return newUser;
+      });
+      
       setSelectedTask(null);
   };
 
