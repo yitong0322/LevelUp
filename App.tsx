@@ -241,16 +241,18 @@ const App: React.FC = () => {
   };
 
   const handlePunishTask = (task: Task) => {
+      const penaltyValue = Math.abs(task.points);
+
       const pointLog: PointLog = {
           id: `pl_${Date.now()}`,
           reason: `Penalty: ${task.title}`,
-          change: -task.points,
+          change: -penaltyValue, 
           timestamp: Date.now()
       };
       setUser(prev => ({
         ...prev,
-        score: prev.score - task.points,
-        todayScore: prev.todayScore - task.points,
+        score: prev.score - penaltyValue,    
+        todayScore: prev.todayScore - penaltyValue,
         pointLogs: [...prev.pointLogs, pointLog]
       }));
       setSelectedTask(null);

@@ -427,13 +427,22 @@ export const TaskDetail = forwardRef<TaskDetailHandle, TaskDetailProps>(({ task,
 
                   <div className="flex justify-end gap-2">
                     {userRole === UserRole.CLIENT && (
-                      <Button 
-                        onClick={() => handleSendMessage()}
-                        disabled={(!inputText && !selectedImage) || task.status === TaskStatus.COMPLETED || task.status === TaskStatus.REVIEW}
-                        className="w-full sm:w-auto"
-                      >
-                        {task.status === TaskStatus.REVIEW ? 'Under Review' : 'Submit Work'} <Send size={16} className="ml-2" />
-                      </Button>
+                      task.status === TaskStatus.PENALTY ? (
+                        <Button 
+                          disabled 
+                          className="w-full sm:w-auto opacity-60 cursor-not-allowed bg-slate-100 border-slate-200 text-slate-400 shadow-none"
+                        >
+                           Penalty Item
+                        </Button>
+                      ) : (
+                        <Button 
+                          onClick={() => handleSendMessage()}
+                          disabled={(!inputText && !selectedImage) || task.status === TaskStatus.COMPLETED || task.status === TaskStatus.REVIEW}
+                          className="w-full sm:w-auto"
+                        >
+                          {task.status === TaskStatus.REVIEW ? 'Under Review' : 'Submit Work'} <Send size={16} className="ml-2" />
+                        </Button>
+                      )
                     )}
 
                     {userRole === UserRole.ADMIN && (
